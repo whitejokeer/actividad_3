@@ -41,6 +41,14 @@
         group: elasticsearch
         mode: '0755'
 
+    - name: Crear directorio de datos para Elasticsearch
+      file:
+        path: /usr/share/elasticsearch/data
+        state: directory
+        owner: elasticsearch
+        group: elasticsearch
+        mode: '0755'
+
     - name: Descargar APM Server deb package
       get_url:
         url: "https://artifacts.elastic.co/downloads/apm-server/apm-server-{{ apm_deb_version }}-amd64.deb"
@@ -127,13 +135,13 @@
         enabled: yes
 
     - name: Asegurar que APM Server está arrancado y habilitado
-      service:
+      systemd:
         name: apm-server
         state: started
         enabled: yes
 
     - name: Asegurar que Logstash está arrancado y habilitado
-      service:
+      systemd:
         name: logstash
         state: started
         enabled: yes

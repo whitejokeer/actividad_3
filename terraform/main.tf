@@ -98,7 +98,7 @@ resource "aws_security_group" "apollo_sg" {
 
 resource "aws_instance" "apollo_instance" {
   ami             = var.custom_ami
-  instance_type   = "t2.micro"
+  instance_type   = "t3.medium"
   key_name        = aws_key_pair.generated_key.key_name
 
   vpc_security_group_ids = [aws_security_group.apollo_sg.id]
