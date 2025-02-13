@@ -1,0 +1,272 @@
+---
+# PLAY 1: Desplegar Elastic Stack en la instancia
+- name: Desplegar Elastic Stack en la instancia
+  hosts: all
+  become: yes
+  vars:
+    elastic_version: "7.x"  # Repositorios para Elasticsearch, Kibana y Logstash
+    apm_deb_version: "7.9.3"
+  tasks:
+    - name: Configurar vm.max_map_count a 262144
+      sysctl:
+        name: vm.max_map_count
+        value: "262144"
+        state: present
+        reload: yes
+
+    - name: Agregar la llave GPG de Elastic
+      apt_key:
+        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+
+    - name: Agregar repositorio de Elastic
+      apt_repository:
+        repo: "deb https://artifacts.elastic.co/packages/{{ elastic_version }}/apt stable main"
+        filename: "elastic-{{ elastic_version }}"
+        state: present
+
+    - name: Instalar Elasticsearch, Kibana y Logstash
+      apt:
+        name:
+          - elasticsearch
+          - kibana
+          - logstash
+        state: present
+
+    - name: Crear directorio de logs para Elasticsearch en /var/log/elasticsearch
+      file:
+        path: /var/log/elasticsearch
+        state: directory
+        owner: elasticsearch
+        group: elasticsearch
+        mode: '0755'
+
+    - name: Descargar APM Server deb package
+      get_url:
+        url: "https://artifacts.elastic.co/downloads/apm-server/apm-server-{{ apm_deb_version }}-amd64.deb"
+        dest: "/tmp/apm-server-{{ apm_deb_version }}-amd64.deb"
+        mode: '0644'
+
+    - name: Instalar APM Server desde el paquete deb
+      apt:
+        deb: "/tmp/apm-server-{{ apm_deb_version }}-amd64.deb"
+
+    - name: Configurar Elasticsearch
+      copy:
+        dest: /etc/elasticsearch/elasticsearch.yml
+        content: |
+          cluster.name: "single-node"
+          network.host: 0.0.0.0
+          http.port: 9200
+          discovery.type: single-node
+          path.logs: /var/log/elasticsearch
+        owner: elasticsearch
+        group: elasticsearch
+        mode: '0644'
+      notify: Restart Elasticsearch
+
+    - name: Configurar Kibana
+      copy:
+        dest: /etc/kibana/kibana.yml
+        content: |
+          server.host: "0.0.0.0"
+          elasticsearch.hosts: ["http://localhost:9200"]
+        owner: kibana
+        group: kibana
+        mode: '0644'
+      notify: Restart Kibana
+
+    - name: Configurar APM Server
+      copy:
+        dest: /etc/apm-server/apm-server.yml
+        content: |
+          apm-server:
+            host: "0.0.0.0:8200"
+          output.elasticsearch:
+            hosts: ["http://localhost:9200"]
+          setup.kibana:
+            host: "localhost:5601"
+        owner: apm-server
+        group: apm-server
+        mode: '0644'
+      notify: Restart APM Server
+
+    - name: Configurar Logstash (pipeline de ejemplo)
+      copy:
+        dest: /etc/logstash/conf.d/simple.conf
+        content: |
+          input {
+            beats {
+              port => 5000
+            }
+          }
+          filter {
+            # Agrega filtros aquí si lo requieres
+          }
+          output {
+            elasticsearch {
+              hosts => ["http://localhost:9200"]
+              index => "logstash-%{+YYYY.MM.dd}"
+            }
+          }
+        owner: logstash
+        group: logstash
+        mode: '0644'
+      notify: Restart Logstash
+
+    - name: Asegurar que Elasticsearch está arrancado y habilitado
+      service:
+        name: elasticsearch
+        state: started
+        enabled: yes
+
+    - name: Asegurar que Kibana está arrancado y habilitado
+      service:
+        name: kibana
+        state: started
+        enabled: yes
+
+    - name: Asegurar que APM Server está arrancado y habilitado
+      service:
+        name: apm-server
+        state: started
+        enabled: yes
+
+    - name: Asegurar que Logstash está arrancado y habilitado
+      service:
+        name: logstash
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart Elasticsearch
+      service:
+        name: elasticsearch
+        state: restarted
+
+    - name: Restart Kibana
+      service:
+        name: kibana
+        state: restarted
+
+    - name: Restart APM Server
+      service:
+        name: apm-server
+        state: restarted
+
+    - name: Restart Logstash
+      service:
+        name: logstash
+        state: restarted
+
+# PLAY 2: Desplegar Apollo Server
+- name: Desplegar Apollo Server en la misma instancia
+  hosts: all
+  become: yes
+  tasks:
+    - name: Actualizar cache de APT e instalar Node.js, npm y git
+      apt:
+        name: [nodejs, npm, git]
+        state: present
+        update_cache: yes
+
+    - name: Instalar PM2 globalmente usando npm
+      npm:
+        name: pm2
+        global: yes
+        state: present
+
+    - name: Crear el directorio para la aplicación Apollo
+      file:
+        path: /opt/apollo
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copiar package.json para Apollo Server
+      copy:
+        dest: /opt/apollo/package.json
+        content: |
+          {
+            "name": "apollo-server-app",
+            "version": "1.0.0",
+            "description": "Simple Apollo Server deployment",
+            "main": "index.js",
+            "scripts": {
+              "start": "node index.js"
+            },
+            "dependencies": {
+              "apollo-server": "^2.25.2",
+              "graphql": "^15.5.0",
+              "elastic-apm-node": "^3.14.0"
+            }
+          }
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copiar código de Apollo Server (index.js)
+      copy:
+        dest: /opt/apollo/index.js
+        content: |
+          // Inicia el agente de APM antes de cualquier otra importación
+          require('elastic-apm-node').start({
+            serviceName: 'apollo-server',
+            serverUrl: 'http://localhost:8200',  // Se conecta al APM Server instalado localmente
+            environment: process.env.NODE_ENV || 'development'
+          });
+          const { ApolloServer, gql } = require('apollo-server');
+
+          // Definición del esquema GraphQL
+          const typeDefs = gql`
+            type Query {
+              hello: String
+            }
+          `;
+
+          // Resolvers para el esquema
+          const resolvers = {
+            Query: {
+              hello: () => 'Hello world!',
+            },
+          };
+
+          // Crear y arrancar el Apollo Server, escuchando en todas las interfaces
+          const server = new ApolloServer({ typeDefs, resolvers });
+          server.listen({ port: 4000, host: '0.0.0.0' }).then(({ url }) => {
+            console.log(`🚀 Server ready at ${url}`);
+          });
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Instalar dependencias de Node.js para Apollo Server
+      command: npm install
+      args:
+        chdir: /opt/apollo
+      register: npm_install_output
+
+    - name: Mostrar salida de npm install
+      debug:
+        var: npm_install_output.stdout_lines
+
+    - name: Iniciar o reiniciar Apollo Server con PM2
+      shell: "pm2 restart apollo || pm2 start /opt/apollo/index.js --name apollo"
+      args:
+        chdir: /opt/apollo
+      register: pm2_command
+      changed_when: true
+
+    - name: Mostrar salida del comando PM2 para Apollo
+      debug:
+        var: pm2_command.stdout_lines
+
+    - name: Listar procesos PM2
+      shell: "pm2 list"
+      register: pm2_list
+      changed_when: false
+
+    - name: Mostrar lista de procesos PM2
+      debug:
+        var: pm2_list.stdout_lines

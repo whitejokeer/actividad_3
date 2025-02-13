@@ -1,0 +1,12 @@
+*.pem
+*.pem.pub
+*.pem.pub.pem
+*.pem.pub.pem.pub
+*.pem.pub.pem.pub.pub
+*.pem.pub.pem.pub.pub.pub
+*.pem.pub.pem.pub.pub.pub.pub
+/.terraform*
+/terraform/.terraform*
+/terraform/*.tfstate
+/terraform/*.tfstate.*
+/terraform/terraform.tfvars
